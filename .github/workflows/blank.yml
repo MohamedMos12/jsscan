@@ -1,0 +1,36 @@
+name: JS Sensitive Data Scanner
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - js_urls.txt
+      - scan_js.py
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          pip install requests
+
+      - name: Run JS Scan
+        run: |
+          mkdir -p output
+          python scan_js.py js_urls.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-scan-results
+          path: output/
