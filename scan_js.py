@@ -17,14 +17,14 @@ HEADERS = {
 
 # Token patterns (strong but safe)
 TOKEN_PATTERNS = [
-    r"AIza[0-9A-Za-z\-_]{35}",                     # Google API
-    r"ya29\.[0-9A-Za-z\-_]+",                      # Google OAuth
-    r"AKIA[0-9A-Z]{16}",                           # AWS Access Key
-    r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}", # JWT
-    r"(?i)(api[_-]?key|secret|token|password)[\"'\s:=]+[A-Za-z0-9_\-]{8,}"
+    r"AIza[0-9A-Za-z\-_]{35}",                      # Google API
+    r"ya29\.[0-9A-Za-z\-_]+",                       # Google OAuth
+    r"AKIA[0-9A-Z]{16}",                            # AWS Access Key
+    r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}",  # JWT
+    r"(api[_-]?key|secret|token|password)[\"'\s:=]+[A-Za-z0-9_\-]{8,}"
 ]
 
-TOKEN_REGEX = re.compile("|".join(TOKEN_PATTERNS))
+TOKEN_REGEX = re.compile("|".join(TOKEN_PATTERNS), re.IGNORECASE)
 
 # =========================
 # Helpers
