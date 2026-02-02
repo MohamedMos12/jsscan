@@ -1,18 +1,19 @@
-name: JS Sensitive Data Scanner
+name: Wayback JS & Sensitive Scanner
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - js_urls.txt
-      - scan_js.py
+    inputs:
+      domain:
+        description: "Target domain (example: 8x8.com)"
+        required: true
+        default: "example.com"
 
 jobs:
   scan:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -20,16 +21,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install requirements
+      - name: Install dependencies
         run: |
-          pip install requests
+          pip install -r requirements.txt
 
-      - name: Run JS Scan
+      - name: Run JS Scanner
+        env:
+          DOMAIN: ${{ github.event.inputs.domain }}
         run: |
           mkdir -p output
-          python scan_js.py js_urls.txt
+          python scan_js.py
 
-      - name: Upload results
+      - name: Upload scan results
         uses: actions/upload-artifact@v4
         with:
           name: js-scan-results
