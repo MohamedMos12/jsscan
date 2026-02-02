@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import re
-import json
 import requests
 from urllib.parse import urlparse
 
@@ -12,12 +11,12 @@ OUTPUT_DIR = "output"
 WAYBACK_URL = "https://web.archive.org/cdx/search/cdx"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
+    "User-Agent": "Mozilla/5.0 (BugBounty-JS-Scanner)",
     "Accept": "application/json"
 }
 
 TOKEN_REGEX = re.compile(
-    r"(api[_-]?key|secret|token|authorization|bearer|aws[_-]?access[_-]?key)",
+    r"(api[_-]?key|secret|token|authorization|bearer|jwt|aws[_-]?access[_-]?key)",
     re.IGNORECASE
 )
 
@@ -31,24 +30,26 @@ ENDPOINT_REGEX = re.compile(
 def ensure_output():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def write_file(name, data):
-    path = os.path.join(OUTPUT_DIR, name)
-    with open(path, "w", encoding="utf-8") as f:
-        for item in sorted(set(data)):
-            f.write(item + "\n")
+def write_file(filename, data):
+    with open(os.path.join(OUTPUT_DIR, filename), "a", encoding="utf-8") as f:
+        for line in sorted(set(data)):
+            f.write(line + "\n")
 
-def get_domain():
-    domain = os.getenv("DOMAIN")
-    if not domain:
-        print("[!] DOMAIN env not set")
+def get_domains():
+    raw = os.getenv("DOMAINS")
+    if not raw:
+        print("[!] DOMAINS env not set")
         exit(1)
-    return domain.strip()
+
+    raw = raw.replace(",", " ")
+    domains = [d.strip() for d in raw.split() if d.strip()]
+    return sorted(set(domains))
 
 # =========================
-# Wayback Fetch
+# Wayback
 # =========================
-def fetch_wayback_urls(domain):
-    print(f"[+] Fetching Wayback URLs for: {domain}")
+def fetch_wayback(domain):
+    print(f"[+] Wayback: {domain}")
 
     params = {
         "url": f"{domain}/*",
@@ -57,18 +58,16 @@ def fetch_wayback_urls(domain):
         "collapse": "urlkey"
     }
 
-    r = requests.get(WAYBACK_URL, params=params, headers=HEADERS, timeout=60)
+    r = requests.get(WAYBACK_URL, headers=HEADERS, params=params, timeout=60)
     r.raise_for_status()
 
     data = r.json()
-    urls = [row[0] for row in data[1:] if row]
-    print(f"[+] Collected {len(urls)} URLs")
-    return urls
+    return [row[0] for row in data[1:] if row]
 
 # =========================
 # Analysis
 # =========================
-def analyze_urls(urls):
+def analyze(domain, urls):
     js_files = []
     endpoints = []
     tokens = []
@@ -77,48 +76,39 @@ def analyze_urls(urls):
     for url in urls:
         parsed = urlparse(url)
 
-        # Subdomains
         if parsed.hostname:
             subdomains.append(parsed.hostname)
 
-        # JS files
         if parsed.path.endswith(".js"):
-            js_files.append(url)
+            js_files.append(f"[{domain}] {url}")
 
-        # Endpoints
         for ep in ENDPOINT_REGEX.findall(url):
-            endpoints.append(ep)
+            endpoints.append(f"[{domain}] {ep}")
 
-        # Tokens
         for tk in TOKEN_REGEX.findall(url):
-            tokens.append(f"{tk} => {url}")
+            tokens.append(f"[{tk.upper()}] => {url}")
 
-    return js_files, endpoints, tokens, subdomains
+    write_file(f"{domain}_urls.txt", urls)
+    write_file(f"{domain}_js_files.txt", js_files)
+    write_file(f"{domain}_endpoints.txt", endpoints)
+    write_file(f"{domain}_secrets.txt", tokens)
+    write_file(f"{domain}_subdomains.txt", subdomains)
 
 # =========================
 # Main
 # =========================
 def main():
     ensure_output()
+    domains = get_domains()
 
-    domain = get_domain()
-    urls = fetch_wayback_urls(domain)
+    for domain in domains:
+        try:
+            urls = fetch_wayback(domain)
+            analyze(domain, urls)
+        except Exception as e:
+            print(f"[!] Error with {domain}: {e}")
 
-    js_files, endpoints, tokens, subdomains = analyze_urls(urls)
-
-    write_file("collected_urls.txt", urls)
-    write_file("js_files.txt", js_files)
-    write_file("endpoints.txt", endpoints)
-    write_file("tokens.txt", tokens)
-    write_file("subdomains.txt", subdomains)
-
-    print("\n[+] Scan completed successfully")
-    print(f"    URLs       : {len(urls)}")
-    print(f"    JS files   : {len(js_files)}")
-    print(f"    Endpoints  : {len(endpoints)}")
-    print(f"    Tokens     : {len(tokens)}")
-    print(f"    Subdomains : {len(subdomains)}")
-    print(f"\n[+] Results saved in ./{OUTPUT_DIR}/")
+    print("\n[+] Scan finished for all domains")
 
 if __name__ == "__main__":
     main()
