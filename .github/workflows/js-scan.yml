@@ -3,10 +3,10 @@ name: JS Wayback Scanner
 on:
   workflow_dispatch:
     inputs:
-      domain:
-        description: "Target domain (example: 8x8.com)"
+      domains:
+        description: "Domains (space / comma / newline separated)"
         required: true
-        default: "example.com"
+        default: "8x8.com"
 
 jobs:
   scan:
@@ -28,7 +28,7 @@ jobs:
 
       - name: Run JS Scanner
         env:
-          DOMAIN: ${{ github.event.inputs.domain }}
+          DOMAINS: ${{ github.event.inputs.domains }}
         run: |
           python scan_js.py
 
