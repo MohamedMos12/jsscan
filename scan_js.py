@@ -7,28 +7,15 @@ import os
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================= USER INPUT =================
+domain = input("Enter domain: ").strip()
 
-print("[*] Enter domain(s) (space or newline separated)")
-print("[*] Example: example.com test.com\n")
-
-user_input = []
-while True:
-    try:
-        line = input()
-        if not line.strip():
-            break
-        user_input.extend(line.strip().split())
-    except EOFError:
-        break
-
-if not user_input:
-    print("[-] No domains provided")
+if not domain:
+    print("[-] No domain provided")
     exit(1)
 
-DOMAINS = list(set(user_input))
+print(f"[+] Target domain: {domain}")
 
 # ================= OUTPUT =================
-
 os.makedirs("output", exist_ok=True)
 
 tokens_file = open("output/tokens.txt", "a", encoding="utf-8")
@@ -38,7 +25,6 @@ sensitive_file = open("output/sensitive_data.txt", "a", encoding="utf-8")
 urls_file = open("output/collected_urls.txt", "a", encoding="utf-8")
 
 # ================= REGEX =================
-
 TOKEN_REGEX = re.compile(
     r'(api[_-]?key|access[_-]?token|authorization|bearer|secret)'
     r'[\s\'":=]+([A-Za-z0-9_\-\.=]{8,})', re.I
@@ -60,7 +46,6 @@ SUBDOMAIN_REGEX = re.compile(
 JS_KEYWORDS = ["function", "=>", "var ", "let ", "const ", "window.", "document."]
 
 # ================= HELPERS =================
-
 def detect_type(resp):
     ct = resp.headers.get("Content-Type", "").lower()
     if "javascript" in ct:
@@ -82,22 +67,18 @@ def wayback_urls(domain):
         return set()
 
 def interesting_file(url):
-    exts = (
+    return url.lower().endswith((
         ".js", ".json", ".env", ".config", ".conf",
         ".bak", ".backup", ".old", ".sql", ".yml", ".yaml"
-    )
-    return url.lower().endswith(exts)
+    ))
 
 # ================= MAIN =================
-
+print("[+] Collecting URLs from Wayback...")
 all_urls = set()
 
-for domain in DOMAINS:
-    print(f"[+] Collecting from Wayback: {domain}")
-    urls = wayback_urls(domain)
-    for u in urls:
-        if interesting_file(u):
-            all_urls.add(u)
+for u in wayback_urls(domain):
+    if interesting_file(u):
+        all_urls.add(u)
 
 print(f"[+] Total collected URLs: {len(all_urls)}")
 
@@ -107,3 +88,33 @@ for url in sorted(all_urls):
     try:
         resp = requests.get(url, timeout=20, verify=False)
     except Exception:
+        continue
+
+    file_type = detect_type(resp)
+    if not file_type:
+        continue
+
+    content = resp.text
+    src = f"[{file_type}] {url}"
+
+    for m in TOKEN_REGEX.findall(content):
+        tokens_file.write(f"{src} => {m[0]} : {m[1]}\n")
+
+    for m in SENSITIVE_REGEX.findall(content):
+        sensitive_file.write(f"{src} => {m[0]} : {m[1]}\n")
+
+    for m in ENDPOINT_REGEX.findall(content):
+        endpoints_file.write(f"{src} => {m}\n")
+
+    for m in SUBDOMAIN_REGEX.findall(content):
+        subs_file.write(f"{src} => {m}\n")
+
+    print(f"[✓] Scanned {file_type}: {url}")
+
+tokens_file.close()
+subs_file.close()
+endpoints_file.close()
+sensitive_file.close()
+urls_file.close()
+
+print("\n[✔] Scan completed successfully")
