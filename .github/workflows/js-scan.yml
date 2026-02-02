@@ -1,4 +1,4 @@
-name: Wayback JS & Sensitive Scanner
+name: JS Wayback Scanner
 
 on:
   workflow_dispatch:
@@ -13,26 +13,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install requests
 
       - name: Run JS Scanner
         env:
           DOMAIN: ${{ github.event.inputs.domain }}
         run: |
-          mkdir -p output
           python scan_js.py
 
-      - name: Upload scan results
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: js-scan-results
