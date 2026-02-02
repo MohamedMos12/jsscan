@@ -12,17 +12,19 @@ WAYBACK_URL = "https://web.archive.org/cdx/search/cdx"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (BugBounty-JS-Scanner)",
-    "Accept": "application/json"
+    "Accept": "*/*"
 }
 
-TOKEN_REGEX = re.compile(
-    r"(api[_-]?key|secret|token|authorization|bearer|jwt|aws[_-]?access[_-]?key)",
-    re.IGNORECASE
-)
+# Token patterns (strong but safe)
+TOKEN_PATTERNS = [
+    r"AIza[0-9A-Za-z\-_]{35}",                     # Google API
+    r"ya29\.[0-9A-Za-z\-_]+",                      # Google OAuth
+    r"AKIA[0-9A-Z]{16}",                           # AWS Access Key
+    r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}", # JWT
+    r"(?i)(api[_-]?key|secret|token|password)[\"'\s:=]+[A-Za-z0-9_\-]{8,}"
+]
 
-ENDPOINT_REGEX = re.compile(
-    r"(\/api\/[a-zA-Z0-9_\-\/]+|\/v\d+\/[a-zA-Z0-9_\-\/]+)"
-)
+TOKEN_REGEX = re.compile("|".join(TOKEN_PATTERNS))
 
 # =========================
 # Helpers
@@ -30,10 +32,9 @@ ENDPOINT_REGEX = re.compile(
 def ensure_output():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def write_file(filename, data):
+def write_line(filename, line):
     with open(os.path.join(OUTPUT_DIR, filename), "a", encoding="utf-8") as f:
-        for line in sorted(set(data)):
-            f.write(line + "\n")
+        f.write(line + "\n")
 
 def get_domains():
     raw = os.getenv("DOMAINS")
@@ -42,57 +43,49 @@ def get_domains():
         exit(1)
 
     raw = raw.replace(",", " ")
-    domains = [d.strip() for d in raw.split() if d.strip()]
-    return sorted(set(domains))
+    return sorted(set(d.strip() for d in raw.split() if d.strip()))
 
 # =========================
 # Wayback
 # =========================
 def fetch_wayback(domain):
-    print(f"[+] Wayback: {domain}")
+    print(f"[+] Fetching Wayback URLs for {domain}")
 
-    params = {
-        "url": f"{domain}/*",
-        "output": "json",
-        "fl": "original",
-        "collapse": "urlkey"
-    }
+    r = requests.get(
+        WAYBACK_URL,
+        headers=HEADERS,
+        params={
+            "url": f"{domain}/*",
+            "output": "json",
+            "fl": "original",
+            "collapse": "urlkey"
+        },
+        timeout=60
+    )
 
-    r = requests.get(WAYBACK_URL, headers=HEADERS, params=params, timeout=60)
     r.raise_for_status()
-
     data = r.json()
-    return [row[0] for row in data[1:] if row]
+    return [row[0] for row in data[1:] if row and row[0].endswith(".js")]
 
 # =========================
-# Analysis
+# JS Downloader + Scanner
 # =========================
-def analyze(domain, urls):
-    js_files = []
-    endpoints = []
-    tokens = []
-    subdomains = []
+def scan_js_file(js_url, domain):
+    try:
+        r = requests.get(js_url, headers=HEADERS, timeout=30)
+        if r.status_code != 200 or len(r.text) < 20:
+            return
 
-    for url in urls:
-        parsed = urlparse(url)
+        matches = TOKEN_REGEX.findall(r.text)
+        for match in matches:
+            token = match if isinstance(match, str) else match[0]
+            write_line(
+                f"{domain}_tokens.txt",
+                f"[{token}] => {js_url}"
+            )
 
-        if parsed.hostname:
-            subdomains.append(parsed.hostname)
-
-        if parsed.path.endswith(".js"):
-            js_files.append(f"[{domain}] {url}")
-
-        for ep in ENDPOINT_REGEX.findall(url):
-            endpoints.append(f"[{domain}] {ep}")
-
-        for tk in TOKEN_REGEX.findall(url):
-            tokens.append(f"[{tk.upper()}] => {url}")
-
-    write_file(f"{domain}_urls.txt", urls)
-    write_file(f"{domain}_js_files.txt", js_files)
-    write_file(f"{domain}_endpoints.txt", endpoints)
-    write_file(f"{domain}_secrets.txt", tokens)
-    write_file(f"{domain}_subdomains.txt", subdomains)
+    except Exception:
+        pass
 
 # =========================
 # Main
@@ -102,13 +95,19 @@ def main():
     domains = get_domains()
 
     for domain in domains:
+        print(f"\n=== Scanning domain: {domain} ===")
+
         try:
-            urls = fetch_wayback(domain)
-            analyze(domain, urls)
+            js_files = fetch_wayback(domain)
+            print(f"[+] JS files found: {len(js_files)}")
+
+            for js in js_files:
+                scan_js_file(js, domain)
+
         except Exception as e:
             print(f"[!] Error with {domain}: {e}")
 
-    print("\n[+] Scan finished for all domains")
+    print("\n[✓] Token scanning completed")
 
 if __name__ == "__main__":
     main()
