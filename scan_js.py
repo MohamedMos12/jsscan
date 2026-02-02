@@ -2,7 +2,6 @@
 import os
 import re
 import requests
-from urllib.parse import urlparse
 
 # =========================
 # Config
@@ -15,11 +14,13 @@ HEADERS = {
     "Accept": "*/*"
 }
 
-# Token patterns (strong but safe)
+# =========================
+# Token regex (safe & fixed)
+# =========================
 TOKEN_PATTERNS = [
     r"AIza[0-9A-Za-z\-_]{35}",                      # Google API
     r"ya29\.[0-9A-Za-z\-_]+",                       # Google OAuth
-    r"AKIA[0-9A-Z]{16}",                            # AWS Access Key
+    r"AKIA[0-9A-Z]{16}",                            # AWS
     r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}",  # JWT
     r"(api[_-]?key|secret|token|password)[\"'\s:=]+[A-Za-z0-9_\-]{8,}"
 ]
@@ -31,6 +32,11 @@ TOKEN_REGEX = re.compile("|".join(TOKEN_PATTERNS), re.IGNORECASE)
 # =========================
 def ensure_output():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def touch_file(filename):
+    path = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.exists(path):
+        open(path, "w").close()
 
 def write_line(filename, line):
     with open(os.path.join(OUTPUT_DIR, filename), "a", encoding="utf-8") as f:
@@ -48,8 +54,8 @@ def get_domains():
 # =========================
 # Wayback
 # =========================
-def fetch_wayback(domain):
-    print(f"[+] Fetching Wayback URLs for {domain}")
+def fetch_js_from_wayback(domain):
+    print(f"[+] Fetching JS URLs for {domain}")
 
     r = requests.get(
         WAYBACK_URL,
@@ -65,15 +71,21 @@ def fetch_wayback(domain):
 
     r.raise_for_status()
     data = r.json()
-    return [row[0] for row in data[1:] if row and row[0].endswith(".js")]
+
+    js_files = []
+    for row in data[1:]:
+        if row and row[0].endswith(".js"):
+            js_files.append(row[0])
+
+    return js_files
 
 # =========================
-# JS Downloader + Scanner
+# JS content scanner
 # =========================
-def scan_js_file(js_url, domain):
+def scan_js(js_url, domain):
     try:
         r = requests.get(js_url, headers=HEADERS, timeout=30)
-        if r.status_code != 200 or len(r.text) < 20:
+        if r.status_code != 200 or len(r.text) < 30:
             return
 
         matches = TOKEN_REGEX.findall(r.text)
@@ -97,17 +109,20 @@ def main():
     for domain in domains:
         print(f"\n=== Scanning domain: {domain} ===")
 
+        # always create output file (even if empty)
+        touch_file(f"{domain}_tokens.txt")
+
         try:
-            js_files = fetch_wayback(domain)
+            js_files = fetch_js_from_wayback(domain)
             print(f"[+] JS files found: {len(js_files)}")
 
             for js in js_files:
-                scan_js_file(js, domain)
+                scan_js(js, domain)
 
         except Exception as e:
             print(f"[!] Error with {domain}: {e}")
 
-    print("\n[✓] Token scanning completed")
+    print("\n[✓] Token scan completed")
 
 if __name__ == "__main__":
     main()
