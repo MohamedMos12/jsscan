@@ -1,120 +1,124 @@
+#!/usr/bin/env python3
+import os
 import re
 import json
 import requests
-import urllib3
-import os
+from urllib.parse import urlparse
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# =========================
+# Config
+# =========================
+OUTPUT_DIR = "output"
+WAYBACK_URL = "https://web.archive.org/cdx/search/cdx"
 
-# ================= USER INPUT =================
-domain = input("Enter domain: ").strip()
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
+    "Accept": "application/json"
+}
 
-if not domain:
-    print("[-] No domain provided")
-    exit(1)
-
-print(f"[+] Target domain: {domain}")
-
-# ================= OUTPUT =================
-os.makedirs("output", exist_ok=True)
-
-tokens_file = open("output/tokens.txt", "a", encoding="utf-8")
-subs_file = open("output/subdomains.txt", "a", encoding="utf-8")
-endpoints_file = open("output/endpoints.txt", "a", encoding="utf-8")
-sensitive_file = open("output/sensitive_data.txt", "a", encoding="utf-8")
-urls_file = open("output/collected_urls.txt", "a", encoding="utf-8")
-
-# ================= REGEX =================
 TOKEN_REGEX = re.compile(
-    r'(api[_-]?key|access[_-]?token|authorization|bearer|secret)'
-    r'[\s\'":=]+([A-Za-z0-9_\-\.=]{8,})', re.I
-)
-
-SENSITIVE_REGEX = re.compile(
-    r'(password|passwd|pwd|private[_-]?key|client[_-]?secret)'
-    r'[\s\'":=]+([^\'"\s]+)', re.I
+    r"(api[_-]?key|secret|token|authorization|bearer|aws[_-]?access[_-]?key)",
+    re.IGNORECASE
 )
 
 ENDPOINT_REGEX = re.compile(
-    r'["\'](\/api\/[^"\']+|https?:\/\/[^"\']+)["\']'
+    r"(\/api\/[a-zA-Z0-9_\-\/]+|\/v\d+\/[a-zA-Z0-9_\-\/]+)"
 )
 
-SUBDOMAIN_REGEX = re.compile(
-    r'https?:\/\/([a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,})'
-)
+# =========================
+# Helpers
+# =========================
+def ensure_output():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-JS_KEYWORDS = ["function", "=>", "var ", "let ", "const ", "window.", "document."]
+def write_file(name, data):
+    path = os.path.join(OUTPUT_DIR, name)
+    with open(path, "w", encoding="utf-8") as f:
+        for item in sorted(set(data)):
+            f.write(item + "\n")
 
-# ================= HELPERS =================
-def detect_type(resp):
-    ct = resp.headers.get("Content-Type", "").lower()
-    if "javascript" in ct:
-        return "JS"
-    if "json" in ct:
-        return "JSON"
-    body = resp.text.lower()
-    if any(k in body for k in JS_KEYWORDS):
-        return "JS"
-    return None
+def get_domain():
+    domain = os.getenv("DOMAIN")
+    if not domain:
+        print("[!] DOMAIN env not set")
+        exit(1)
+    return domain.strip()
 
-def wayback_urls(domain):
-    url = f"https://web.archive.org/cdx/search/cdx?url={domain}*&output=json&fl=original&collapse=urlkey"
-    try:
-        r = requests.get(url, timeout=30)
-        data = json.loads(r.text)
-        return {row[0] for row in data[1:]}
-    except Exception:
-        return set()
+# =========================
+# Wayback Fetch
+# =========================
+def fetch_wayback_urls(domain):
+    print(f"[+] Fetching Wayback URLs for: {domain}")
 
-def interesting_file(url):
-    return url.lower().endswith((
-        ".js", ".json", ".env", ".config", ".conf",
-        ".bak", ".backup", ".old", ".sql", ".yml", ".yaml"
-    ))
+    params = {
+        "url": f"{domain}/*",
+        "output": "json",
+        "fl": "original",
+        "collapse": "urlkey"
+    }
 
-# ================= MAIN =================
-print("[+] Collecting URLs from Wayback...")
-all_urls = set()
+    r = requests.get(WAYBACK_URL, params=params, headers=HEADERS, timeout=60)
+    r.raise_for_status()
 
-for u in wayback_urls(domain):
-    if interesting_file(u):
-        all_urls.add(u)
+    data = r.json()
+    urls = [row[0] for row in data[1:] if row]
+    print(f"[+] Collected {len(urls)} URLs")
+    return urls
 
-print(f"[+] Total collected URLs: {len(all_urls)}")
+# =========================
+# Analysis
+# =========================
+def analyze_urls(urls):
+    js_files = []
+    endpoints = []
+    tokens = []
+    subdomains = []
 
-for url in sorted(all_urls):
-    urls_file.write(url + "\n")
+    for url in urls:
+        parsed = urlparse(url)
 
-    try:
-        resp = requests.get(url, timeout=20, verify=False)
-    except Exception:
-        continue
+        # Subdomains
+        if parsed.hostname:
+            subdomains.append(parsed.hostname)
 
-    file_type = detect_type(resp)
-    if not file_type:
-        continue
+        # JS files
+        if parsed.path.endswith(".js"):
+            js_files.append(url)
 
-    content = resp.text
-    src = f"[{file_type}] {url}"
+        # Endpoints
+        for ep in ENDPOINT_REGEX.findall(url):
+            endpoints.append(ep)
 
-    for m in TOKEN_REGEX.findall(content):
-        tokens_file.write(f"{src} => {m[0]} : {m[1]}\n")
+        # Tokens
+        for tk in TOKEN_REGEX.findall(url):
+            tokens.append(f"{tk} => {url}")
 
-    for m in SENSITIVE_REGEX.findall(content):
-        sensitive_file.write(f"{src} => {m[0]} : {m[1]}\n")
+    return js_files, endpoints, tokens, subdomains
 
-    for m in ENDPOINT_REGEX.findall(content):
-        endpoints_file.write(f"{src} => {m}\n")
+# =========================
+# Main
+# =========================
+def main():
+    ensure_output()
 
-    for m in SUBDOMAIN_REGEX.findall(content):
-        subs_file.write(f"{src} => {m}\n")
+    domain = get_domain()
+    urls = fetch_wayback_urls(domain)
 
-    print(f"[✓] Scanned {file_type}: {url}")
+    js_files, endpoints, tokens, subdomains = analyze_urls(urls)
 
-tokens_file.close()
-subs_file.close()
-endpoints_file.close()
-sensitive_file.close()
-urls_file.close()
+    write_file("collected_urls.txt", urls)
+    write_file("js_files.txt", js_files)
+    write_file("endpoints.txt", endpoints)
+    write_file("tokens.txt", tokens)
+    write_file("subdomains.txt", subdomains)
 
-print("\n[✔] Scan completed successfully")
+    print("\n[+] Scan completed successfully")
+    print(f"    URLs       : {len(urls)}")
+    print(f"    JS files   : {len(js_files)}")
+    print(f"    Endpoints  : {len(endpoints)}")
+    print(f"    Tokens     : {len(tokens)}")
+    print(f"    Subdomains : {len(subdomains)}")
+    print(f"\n[+] Results saved in ./{OUTPUT_DIR}/")
+
+if __name__ == "__main__":
+    main()
